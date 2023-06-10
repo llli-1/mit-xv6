@@ -1,0 +1,28 @@
+#include"kernel/types.h"
+#include"user/user.h" 
+int main(int argc, char* argv[]){
+	
+	// 用户忘记传递参数，sleep打印一条错误信息
+	if(argc <= 1){
+		printf("sleep flaied: do not input argument\n");
+		exit(1);
+	}
+
+	// 用户指定需暂停的滴答数
+	int time_pause = atoi(argv[1]);
+		
+	int ret = sleep(time_pause);
+
+	if(ret == 0){
+		printf("sleep success!\n");
+	}
+	else{
+		printf("sleep failed!\n");
+		exit(1);
+	}
+
+
+	//顺利进行就是正常退出
+	exit(0);
+
+}
