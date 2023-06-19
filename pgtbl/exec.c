@@ -9,11 +9,12 @@
 
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
 
-int exec(char *path, char **argv)
+int
+exec(char *path, char **argv)
 {
   char *s, *last;
   int i, off;
-  uint64 argc, sz = 0, sp, ustack[MAXARG+1], stackbase;
+  uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
   struct elfhdr elf;
   struct inode *ip;
   struct proghdr ph;
@@ -34,10 +35,8 @@ int exec(char *path, char **argv)
   if(elf.magic != ELF_MAGIC)
     goto bad;
 
-  // 分配一个用户页表
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
-  
 
   // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
@@ -53,12 +52,11 @@ int exec(char *path, char **argv)
     if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0)
       goto bad;
     sz = sz1;
-    if(ph.vaddr % PGSIZE != 0)
+    if((ph.vaddr % PGSIZE) != 0)
       goto bad;
     if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
       goto bad;
   }
-  
   iunlockput(ip);
   end_op();
   ip = 0;
@@ -116,16 +114,8 @@ int exec(char *path, char **argv)
   p->sz = sz;
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
-  
-  // 将用户页表复制给内核页表
-  if((u2kcopy(p->pagetable, p->kernel_page_table, 0, p->sz)) == -1)
-    goto bad;
-  
   proc_freepagetable(oldpagetable, oldsz);
-  
-  if(p->pid==1) 
-    vmprint(p->pagetable);
-  
+
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
@@ -138,18 +128,15 @@ int exec(char *path, char **argv)
   return -1;
 }
 
-// 将程序段从虚拟地址va开始放入，并且从va到va+sz这段地址内的页面必须已经被映射了
 // Load a program segment into pagetable at virtual address va.
 // va must be page-aligned
 // and the pages from va to va+sz must already be mapped.
 // Returns 0 on success, -1 on failure.
-static int loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
+static int
+loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
 {
   uint i, n;
   uint64 pa;
-
-  if((va % PGSIZE) != 0)
-    panic("loadseg: va must be page aligned");
 
   for(i = 0; i < sz; i += PGSIZE){
     pa = walkaddr(pagetable, va + i);
