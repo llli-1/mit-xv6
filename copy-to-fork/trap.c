@@ -70,7 +70,7 @@ usertrap(void)
   else if((which_dev = devintr()) != 0){
     // ok
   }
-  else if(r_scause() == 13 || r_scause() == 15){
+  else if(r_scause() == 15 || r_scause() == 13 || r_scause() == 12){
     uint64 va = r_stval();
     if(cow_check(va)){
       cow_alloc(va);

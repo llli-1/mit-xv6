@@ -11,7 +11,7 @@
 
 struct spinlock pgreflock; // 用于pageref数组的锁
 #define PA2PGREF_ID(p)  (((p)-KERNBASE)/PGSIZE)
-#define PGREF_MAX PA2PGREF_ID(PHYSTOP)
+#define PGREF_MAX   PA2PGREF_ID(PHYSTOP)
 int p_refered[PGREF_MAX];
 
 // 获得引用计数

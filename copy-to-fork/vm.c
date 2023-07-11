@@ -161,8 +161,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       printf("mappages:walk failed\n");
        return -1;
      }
-    if(*pte & PTE_V)
-      panic("remap");
+    //if(*pte & PTE_V)
+      // panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -381,11 +381,11 @@ int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   uint64 n, va0, pa0;
 
   while(len > 0){
-    va0 = PGROUNDDOWN(dstva);
-    
-    if(cow_check(va0)){
-         cow_alloc(va0);
+  
+    if(cow_check(dstva)){
+         cow_alloc(dstva);
     }
+    va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
@@ -473,8 +473,9 @@ uint64 cow_check(uint64 va){
   // va是传进来的发生page fault的地址--需要页对齐
   //va = PGROUNDUP(va);
   struct proc* p = myproc();
+  if(va >= MAXVA) return 0;
   pte_t* pte = walk(p->pagetable, va, 0);
-  return va < p->sz && va < MAXVA && (pte != 0) && (*pte & PTE_V) && (*pte & PTE_COW); // 1-cow page
+  return va < p->sz && (pte != 0) && (*pte & PTE_V) && (*pte & PTE_COW); // 1-cow page
   
 }
 
@@ -490,13 +491,15 @@ void cow_alloc(uint64 va){
    uint64 new = (uint64)kcopy_n_deref((void*)pa);
    if(new == 0){
      p->killed = 1;
+     return;
    }
    // 将child的PTE从旧页变成新页
    //先取消对原来旧页的映射再映射新页的
    // 不用do_free;
-   uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0); 
    uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
-   if(mappages(p->pagetable, va, PGSIZE, new, flags) != 0){
+   uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0); 
+   
+   if(mappages(p->pagetable, va, 1, new, flags) != 0){
 	  printf("cowalloc: fail to mappages\n");
 	  p->killed = 1;
 	  panic("cowalloc-mappages\n");
