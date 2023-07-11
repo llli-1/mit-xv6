@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -15,7 +17,6 @@ extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
-extern char end[]; //kernel.ld sets this to end of kernel
 
 /*
  * create a direct-map page table for the kernel.
@@ -160,8 +161,8 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
       printf("mappages:walk failed\n");
        return -1;
      }
-   /* if(*pte & PTE_V)
-      panic("remap");*/
+    if(*pte & PTE_V)
+      panic("remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
       break;
@@ -323,17 +324,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte); // parent's
-    flags = PTE_FLAGS(*pte); // parent's
+    // flags = PTE_FLAGS(*pte); // parent's
     // parent's PTE->only read, not write
-    flags |= PTE_R;
-    flags &= ~PTE_W; 
+   
+    
 /*    if((mem = kalloc()) == 0)
       goto err;
 */
  // don't need to copy pa   
  //   memmove(mem, (char*)pa, PGSIZE);
  //   only copy page table, create map
-     flags |= PTE_COW; 
+ 
+ /*flags &= ~PTE_W; // not change pte
+     flags |= PTE_COW;*/ 
+     
+     if(*pte & PTE_W){
+      *pte = (*pte & ~PTE_W) | PTE_COW;
+     }
+     flags = PTE_FLAGS(*pte);
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
       printf("uvmcopy: mappages failed\n");
   //    kfree(mem);
@@ -341,7 +349,8 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     }
    // 增加计数
  //  p_refered[(PRGOUNDUP(pa)-PGROUNDUP((uint64)end))/PGSIZE]++;
-   PA2PGREF(pa)++;
+//   PA2PGREF(pa)++;
+    krefpage((void*)pa);
   }
   return 0;
 
@@ -366,8 +375,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
-int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
 
   uint64 n, va0, pa0;
@@ -462,43 +470,35 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 }
 
 uint64 cow_check(uint64 va){
-// va是传进来的发生page fault的地址--需要页对齐
-  va = PGROUNDUP(va);
+  // va是传进来的发生page fault的地址--需要页对齐
+  //va = PGROUNDUP(va);
   struct proc* p = myproc();
-  pte_t* pte = walk(p->pagetable, va, 1);
-  return ((*pte & PTE_COW) != 0); // 1-cow page
+  pte_t* pte = walk(p->pagetable, va, 0);
+  return va < p->sz && va < MAXVA && (pte != 0) && (*pte & PTE_V) && (*pte & PTE_COW); // 1-cow page
+  
 }
 
-void cow_alloc(uint64 va)
+void cow_alloc(uint64 va){
    struct proc* p = myproc();
-   va = PGROUNDUP(va);
-   char* mem = kalloc();
    pte_t* pte;
    uint64 pa;
-   if(mem == 0){
-      printf("usertrap():cow-kalloc failed");
-      p->killed = 1;
+   // 但是这里parent和child共享了物理内存的话，其实指向的是一样的
+   if((pte = walk(p->pagetable, va, 0)) == 0){
+	panic("cow_alloc: walk\n");
    }
-   else{
-        memset(mem, 0 ,PGSIZE);
-        // 但是这里parent和child共享了物理内存的话，其实指向的是一样的
-	pte = walk(p->parent->pagetable, va, 0);
-	pa = PTE2PA(pte);
-	memmove(mem, (char* )pa, PGSIZE); // 将旧业复制到新页
-	// 不确定这里要不要清除PTE_COW
-	// 将child的PTE从旧页变成新页
-	//先取消对原来旧页的映射再映射新页的
-	// 不用do_free;
-	uvmunmap(p->pagetable, va, 1, 0); 
-	if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_X|PTE_R|PTE_U) != 0){
+   pa = PTE2PA(*pte);
+   uint64 new = (uint64)kcopy_n_deref((void*)pa);
+   if(new == 0){
+     p->killed = 1;
+   }
+   // 将child的PTE从旧页变成新页
+   //先取消对原来旧页的映射再映射新页的
+   // 不用do_free;
+   uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0); 
+   uint64 flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+   if(mappages(p->pagetable, va, PGSIZE, new, flags) != 0){
 	  printf("cowalloc: fail to mappages\n");
-	  kfree(mem);
 	  p->killed = 1;
-	   }
-	 // 然后令parent的cow page变为可写
-	 pte |= PTE_W;
-	 // 减少引用时需要减少计数--
-	// p_refered[(va - PGROUNDUP((uint64)end))/PGSIZE]--;
-         PA2PGREF(pa)--;
+	  panic("cowalloc-mappages\n");
     }
 }
